@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>나만의 펀드</title>
+</head>
+<body>
+<h1>나만의 펀드</h1>
+<section>
+  <h3>환경설정</h3>
+  <label>모드
+    <select id="mode">
+      <option value="virtual">모의</option>
+      <option value="real">실전</option>
+    </select>
+  </label>
+  <label>App Key <input id="appkey" autocomplete="off" /></label>
+  <label>App Secret <input id="appsecret" type="password" autocomplete="off" /></label>
+  <label>CANO <input id="cano" autocomplete="off" /></label>
+  <label>ACNT_PRDT_CD <input id="acnt" autocomplete="off" /></label>
+  <label>HTS ID <input id="hts" autocomplete="off" /></label>
+</section>
+
+<section>
+  <h3>포트폴리오 입력</h3>
+  <label>총 투자금 <input id="total_cash" type="number" value="1000000" /></label>
+  <button type="button" onclick="addRow()">종목 추가</button>
+  <table id="items">
+    <tr><th>종목코드</th><th>투자 이유</th></tr>
+  </table>
+  <label>초기매수비중 <input id="init_ratio" type="number" step="0.01" value="0.5" /></label>
+  <label>잔여분 지정가 할인률 <input id="discount" type="number" step="0.01" value="0.03" /></label>
+  <label><input type="checkbox" id="buy_etf" /> 남는 현금 단기채 ETF/CMA</label>
+</section>
+
+<button id="calc-btn">비중 추천 → 미리보기</button>
+<button id="exec-btn" style="display:none;">주문 실행(모의)</button>
+
+<div id="weights"></div>
+<div id="preview"></div>
+<div id="execute"></div>
+
+<script>
+let lastPreview = null;
+function addRow(){
+  const table=document.getElementById('items');
+  const row=document.createElement('tr');
+  row.innerHTML='<td><input name="symbol" autocomplete="off" /></td><td><input name="reason" style="width:300px" /></td>';
+  table.appendChild(row);
+}
+addRow();
+addRow();
+
+document.getElementById('calc-btn').addEventListener('click', async ()=>{
+  const mode=document.getElementById('mode').value;
+  const appkey=document.getElementById('appkey').value;
+  const appsecret=document.getElementById('appsecret').value;
+  await fetch('/api/kis/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appkey,appsecret,mode})});
+  document.getElementById('appkey').value='';
+  document.getElementById('appsecret').value='';
+
+  const rows=document.querySelectorAll('#items tr');
+  const items=[];
+  rows.forEach((row,i)=>{
+    if(i===0) return;
+    const symbol=row.querySelector('input[name="symbol"]').value;
+    const reason=row.querySelector('input[name="reason"]').value;
+    if(symbol) items.push({symbol,reason});
+  });
+  const total_cash=parseFloat(document.getElementById('total_cash').value);
+  const initial_buy_ratio=parseFloat(document.getElementById('init_ratio').value);
+  const discount_rate=parseFloat(document.getElementById('discount').value);
+
+  const weightRes=await fetch('/api/portfolio/weights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({total_cash,items,initial_buy_ratio,discount_rate})}).then(r=>r.json());
+  let whtml='<h3>비중 결과</h3><table><tr><th>종목</th><th>비중</th><th>초기</th><th>잔여</th><th>지정가</th></tr>';
+  weightRes.results.forEach(r=>{whtml+=`<tr><td>${r.symbol}</td><td>${(r.weight*100).toFixed(2)}%</td><td>${r.initial_buy_cash}</td><td>${r.dca_cash}</td><td>${r.limit_price_hint}</td></tr>`});
+  whtml+='</table>';
+  document.getElementById('weights').innerHTML=whtml;
+
+  const previewReq={results:weightRes.results,total_cash};
+  const previewRes=await fetch('/api/orders/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(previewReq)}).then(r=>r.json());
+  lastPreview=previewRes;
+  let phtml='<h3>주문 프리뷰</h3><table><tr><th>종목</th><th>시장가수량</th><th>지정가수량</th><th>지정가</th><th>필요현금</th></tr>';
+  previewRes.items.forEach(i=>{phtml+=`<tr><td>${i.symbol}</td><td>${i.qty_market}</td><td>${i.qty_limit}</td><td>${i.limit_price}</td><td>${i.cash_needed}</td></tr>`});
+  phtml+='</table>';
+  document.getElementById('preview').innerHTML=phtml;
+  document.getElementById('exec-btn').style.display='inline';
+});
+
+document.getElementById('exec-btn').addEventListener('click', async ()=>{
+  if(!lastPreview) return;
+  const res=await fetch('/api/orders/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lastPreview)}).then(r=>r.json());
+  let html='<h3>주문 결과</h3><pre>'+JSON.stringify(res, null, 2)+'</pre>';
+  document.getElementById('execute').innerHTML=html;
+});
+</script>
+</body>
+</html>
